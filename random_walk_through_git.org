@@ -1,0 +1,458 @@
+#+title: A Random Walk Through Git
+#+author: Malte Kiesel, Kaushal Modi
+
+#+property: header-args :eval never-export
+#+property: header-args:shell :exports both :results output :session *Git Random Walk*
+
+# Tue Nov 09 16:23:14 EST 2021 - kmodi
+# Unable to work on this document until the bug with ob-shell and sessions gets fixed.
+# Ref: https://list.orgmode.org/CAFyQvY2AeToQc2G=e+DE4VOTeTFbkvisENipYpW1Y-feu1ov1g@mail.gmail.com/
+# Local recipe of this issue: ~/sandbox/org/bug-recipes/ob-shell-truncating-results/t.org
+
+* Credit
+[[https://github.com/bakkenbaeck/a-random-walk-through-git][Original Source]] --- This Org file is mostly a translation of the
+content from the above linked repository.
+
+One change compared to the original is that I expect the users to
+sequentially evaluation each source block in Org Mode and *not* skip
+any step.
+* Preface
+Hi.
+
+This tutorial is an in-depth look at how Git works, performing a lot
+of sometimes unusual steps to walk through interesting details. You
+will have to pay attention closely, or you will get lost on the
+way. But do not despair; you can run this tutorial on your computer,
+at the speed you want,
+
+# In fact, you are looking at an HTML file generated from the output
+# of that tutorial. (that's why there is that "echo Hi" thing above:
+# the hack that the tutorial script is only allows comments after
+# commands. :) )
+
+# The code of the tutorial is here:
+# github.com/bakkenbaeck/a-random-walk-through-git - clone it and run it
+# on your machine!
+
+This tutorial is NOT for absolute beginners, nor is it a collection of
+"cooking recipies". Recipies will not help you understanding the broad
+picture, nor will they get you out of tricky situations.  Some deeper
+understanding by experimentation and investigation will, though. So
+let's get started.
+* Terms
+First, a quick recap of Git-related terms ..
+
+- tree :: set of files (filenames, perms, pointers to subtrees/file
+  blobs, NOT timedates)
+- commit :: metadata (time, author, pointer to tree, possibly pointer
+  to parent commit(s))
+- HEAD :: last commit hash/parent of next commit (local only, modified
+  by, e.g., git checkout)
+- index/staging/cache :: HEAD plus "changes to be committed" (local
+  only, modified by, e.g., git add/reset, stored in .git)
+- working directory/WIP :: index plus "changes not added for commit"
+  (plain files, local only, modified by, e.g., git checkout/reset
+  --hard)
+
+Ok? Then let's init a Git repository... and have a look at the files
+in the ~.git/~ folder.
+* Git Version
+#+begin_src shell
+git --version
+#+end_src
+
+#+RESULTS:
+:
+: git version 2.33.0
+
+* Git Init
+First delete the ~to_be_deleted/~ directory in the current directory
+if it already exists.
+
+#+begin_src shell
+find . -type d -name to_be_deleted | xargs rm -rf
+#+end_src
+
+#+RESULTS:
+
+#+begin_src shell
+git init to_be_deleted
+cd to_be_deleted
+
+git config --local init.defaultBranch main
+git config --local user.name "Foo Bar"
+git config --local user.email "foo.bar@fakeemail.com"
+
+export GIT_PAGER=cat
+#+end_src
+
+#+RESULTS:
+: Initialized empty Git repository in /home/kmodi/sandbox/git/random_walk/org-version/to_be_deleted/.git/
+
+#+begin_src shell
+rm -rf ./.git/hooks/ && find .git -type f
+#+end_src
+
+#+RESULTS:
+: .git/info/exclude
+: .git/description
+: .git/HEAD
+: .git/config
+
+* Git Commit
+Then, let's commit a README.
+
+#+begin_src shell
+echo "This is not a README yet" > README
+git add README
+git commit -m "first commit"
+#+end_src
+
+#+RESULTS:
+:
+: sh-4.2$ [main (root-commit) b380488] first commit
+:  1 file changed, 1 insertion(+)
+:  create mode 100644 README
+* Files in ~.git/~
+What files were created by the commit in the ~.git/~ folder?
+** Objects
+#+begin_src shell
+file .git/objects/*/*
+#+end_src
+
+#+RESULTS:
+: .git/objects/5b/6c6cb672dc1c3e3f38da4cc819c07da510fb59: VAX COFF executable not stripped - version 8325
+: .git/objects/a8/826610f06b1097f9d47e1f0f7bcf864e9e34d1: VAX COFF executable - version 15841
+: .git/objects/b3/5c99875f5758f64e9348c05dac14848a046f59: VAX COFF executable not stripped - version 25973
+
+Don't worry about the "VAX COFF executable" type listed by ~file~
+above. Git actually compresses all the internal blocks using zlib and
+so ~file~ couldn't figure out the type correctly. Saves space and
+keeps grep clean. Yay!  More details on these files later.
+** Refs
+#+begin_src shell
+cat .git/refs/heads/main
+#+end_src
+
+#+RESULTS:
+: a8826610f06b1097f9d47e1f0f7bcf864e9e34d1
+** HEAD
+#+begin_src shell
+cat .git/HEAD
+#+end_src
+
+#+RESULTS:
+: ref: refs/heads/main
+
+This is a pointer to current HEAD (or a hash when in "detached HEAD"
+state).
+** Reflog
+#+begin_src shell
+cat .git/logs/refs/heads/main
+#+end_src
+
+#+RESULTS:
+:
+: 1636491893 -0500	commit (initial): first commit
+
+This is the reflog of master HEAD (cf. git reflog).  It is not part of
+repo but for local convenience only.  We'll look at it later.
+** Index
+#+begin_src shell
+file .git/index
+#+end_src
+
+#+RESULTS:
+:
+: .git/index: Git index, version 2, 1 entries
+
+That's the file Git uses to keep track of the current index (local
+only). It is basically an uncommitted commit, or rather the 'tree'
+part of that. This file is one of the few Git files that is a bit
+magic, mostly because of speed optimization considerations: In order
+for "git status" to be able to run really fast, some data additional
+to the data kept in the actual repo has to be available. This is why
+~.git/index~ is not just a standard tree object (which doesn't have
+the additional metadata).
+
+We will not go into details here. Further reading:
+- [[https://github.com/git/git/blob/master/Documentation/technical/index-format.txt][Git index format]]
+- [[https://mirrors.edge.kernel.org/pub/software/scm/git/docs/technical/racy-git.txt][Use of index and Racy Git problem]]
+- [[https://stackoverflow.com/questions/4084921/what-does-the-git-index-contain-exactly][What does the git index contain EXACTLY -- StackOverflow]]
+
+* Git Log
+#+begin_src shell
+git log
+#+end_src
+
+#+RESULTS:
+:
+: commit 34924761f042eab59567ec150a73c730ab2c929c (HEAD -> main)
+: Author: Foo Bar <foo.bar@fakeemail.com>
+: Date:   Tue Jun 8 23:56:48 2021 -0400
+:
+: first commit
+
+Note the commit hash. It's basically sha1sum(commit metadata including
+pointer to hash of tree)
+* Git Commit Amend
+#+begin_src shell
+git commit --amend -m "first commit"
+#+end_src
+
+#+RESULTS:
+:
+: [main ba72672] first commit
+: Date: Tue Jun 8 23:56:48 2021 -0400
+: 1 file changed, 1 insertion(+)
+: create mode 100644 README
+
+We just amended the last commit but didn't actually change anything:
+same commit message, author, tree, and time.  But the commit hash has
+changed. Why?
+
+#+begin_src shell :results output verbatim
+git log --pretty=fuller
+#+end_src
+
+#+RESULTS:
+:
+: commit ba72672c499af8b713437d8c05eb5979969954dd (HEAD -> main)
+: Author:     Foo Bar <foo.bar@fakeemail.com>
+: AuthorDate: Tue Jun 8 23:56:48 2021 -0400
+: Commit:     Foo Bar <foo.bar@fakeemail.com>
+: CommitDate: Tue Jun 8 23:57:46 2021 -0400
+:
+: first commit
+
+Because there's more metadata than ~git log~ shows by default ---
+There's an author date and a commit date. Amending a commit keeps the
+author date but updates the commit date.
+
+Note that Git has separate author and committer to account for the
+traditional Linux email based patch workflow. Authors would send in
+patches by mail, maintainers pick up patches and commit (or reject).
+
+Rewrite last commit with fixed times (~--date~ sets author date):
+
+#+begin_src shell
+GIT_COMMITTER_DATE="Jan 1 12:00 2000 +0000" git commit --amend --date="Jan 1 12:00 2000 +0000" -m "first commit"
+#+end_src
+
+#+RESULTS:
+: [main 3c0b3cd] first commit
+:  Date: Sat Jan 1 12:00:00 2000 +0000
+:  1 file changed, 1 insertion(+)
+:  create mode 100644 README
+
+Run the same command again:
+
+#+begin_src shell
+GIT_COMMITTER_DATE="Jan 1 12:00 2000 +0000" git commit --amend --date="Jan 1 12:00 2000 +0000" -m "first commit"
+#+end_src
+
+#+RESULTS:
+: [main 3c0b3cd] first commit
+:  Date: Sat Jan 1 12:00:00 2000 +0000
+:  1 file changed, 1 insertion(+)
+:  create mode 100644 README
+
+THAT works! Now the commit hash stays the same because the commit date
+is fixed.
+
+#+begin_src shell
+git log --pretty=fuller
+#+end_src
+
+#+RESULTS:
+:
+: commit 3c0b3cda6759b19fb341736c29f2273ceba76bae (HEAD -> main)
+: Author:     Foo Bar <foo.bar@fakeemail.com>
+: AuthorDate: Sat Jan 1 12:00:00 2000 +0000
+: Commit:     Foo Bar <foo.bar@fakeemail.com>
+: CommitDate: Sat Jan 1 12:00:00 2000 +0000
+:
+: first commit
+
+Let us fix dates so that we have deterministic hashes.
+
+*For the purposes if this demo only; do NOT do this at home!*
+
+#+begin_src shell
+export GIT_COMMITTER_DATE="Jan 1 12:00 2000 +0000"
+export GIT_AUTHOR_DATE="Jan 1 12:00 2000 +0000"
+#+end_src
+
+#+RESULTS:
+
+#+begin_src shell
+file .git/objects/*/*
+#+end_src
+
+#+RESULTS:
+:
+: .git/objects/34/924761f042eab59567ec150a73c730ab2c929c: VAX COFF executable - version 31651
+: .git/objects/3c/0b3cda6759b19fb341736c29f2273ceba76bae: VAX COFF executable - version 15841
+: .git/objects/5b/6c6cb672dc1c3e3f38da4cc819c07da510fb59: VAX COFF executable not stripped - version 8325
+: .git/objects/b3/5c99875f5758f64e9348c05dac14848a046f59: VAX COFF executable not stripped - version 25973
+: .git/objects/ba/72672c499af8b713437d8c05eb5979969954dd: VAX COFF executable
+
+That's one tree (we didn't change files so far), one file, three
+commits (original, hash test, fixed time).
+* Git Branch
+#+begin_src shell
+git branch test
+#+end_src
+
+#+RESULTS:
+
+#+begin_src shell
+file .git/objects/*/*
+#+end_src
+
+#+RESULTS:
+:
+: .git/objects/34/924761f042eab59567ec150a73c730ab2c929c: VAX COFF executable - version 31651
+: .git/objects/3c/0b3cda6759b19fb341736c29f2273ceba76bae: VAX COFF executable - version 15841
+: .git/objects/5b/6c6cb672dc1c3e3f38da4cc819c07da510fb59: VAX COFF executable not stripped - version 8325
+: .git/objects/b3/5c99875f5758f64e9348c05dac14848a046f59: VAX COFF executable not stripped - version 25973
+: .git/objects/ba/72672c499af8b713437d8c05eb5979969954dd: VAX COFF executable
+
+Just creating a new branch doesn't create any new trees or commits or
+blobs.
+
+#+begin_src shell
+cat .git/HEAD
+#+end_src
+
+#+RESULTS:
+:
+: ref: refs/heads/main
+
+Right, we're still on the ~main~ branch.
+
+#+begin_src shell
+git checkout test
+#+end_src
+
+#+RESULTS:
+:
+: Switched to branch 'test'
+
+#+begin_src shell
+cat .git/HEAD
+#+end_src
+
+#+RESULTS:
+:
+: ref: refs/heads/test
+
+#+begin_src shell
+cat .git/refs/heads/test
+#+end_src
+
+#+RESULTS:
+:
+: 3c0b3cda6759b19fb341736c29f2273ceba76bae
+
+That file is all that Git needs to handle (local) branches.
+
+#+begin_src shell
+file .git/objects/3c/*
+#+end_src
+
+#+RESULTS:
+:
+: .git/objects/3c/0b3cda6759b19fb341736c29f2273ceba76bae: VAX COFF executable - version 15841
+
+We have an object with that commit hash, let's have a look:
+
+#+begin_src shell
+git cat-file -t 3c0b3cda6759b19fb341736c29f2273ceba76bae
+#+end_src
+
+#+RESULTS:
+:
+: commit
+
+~cat-file~ is low level Git ('plumbing'); ~-t~ prints the object type.
+
+#+begin_src shell
+git cat-file -p 3c0b3cda6759b19fb341736c29f2273ceba76bae
+#+end_src
+
+#+RESULTS:
+:
+: tree b35c99875f5758f64e9348c05dac14848a046f59
+: author Foo Bar <foo.bar@fakeemail.com> 946728000 +0000
+: committer Foo Bar <foo.bar@fakeemail.com> 946728000 +0000
+:
+: first commit
+
+.. and ~-p~ pretty prints that object's content. Let's look at the
+referenced tree:
+
+#+begin_src shell
+git cat-file -p b35c99875f5758f64e9348c05dac14848a046f59
+#+end_src
+
+#+RESULTS:
+:
+: 100644 blob 5b6c6cb672dc1c3e3f38da4cc819c07da510fb59	README
+
+Note that file metadata (file mode bits, filename) is found in the
+tree's data. There's no file date: git checkout etc. always writes
+with current date as many tools (GNU make etc.) rely on file dates for
+their operation, e.g., make only rebuilds artifacts if the artifact
+filedate is older than the source file date - so checking out older
+project versions (with 'correct' old file dates) would not trigger
+rebuilds.  Let's look at the referenced blob.
+
+#+begin_src shell
+git cat-file -t 5b6c6cb672dc1c3e3f38da4cc819c07da510fb59
+#+end_src
+
+#+RESULTS:
+:
+: blob
+
+#+begin_src shell
+git cat-file -p 5b6c6cb672dc1c3e3f38da4cc819c07da510fb59
+#+end_src
+
+#+RESULTS:
+:
+: This is not a README yet
+
+But how much magic does cat-file do?
+
+(You can use ~openssl~ to decompress a zlib. -- [[https://unix.stackexchange.com/a/22837/57923][ref]])
+
+#+begin_src shell
+openssl zlib -d < .git/objects/5b/6c6cb672dc1c3e3f38da4cc819c07da510fb59 | hexdump -C
+#+end_src
+
+#+RESULTS:
+:
+: 00000000  62 6c 6f 62 20 32 35 00  54 68 69 73 20 69 73 20  |blob 25.This is |
+: 00000010  6e 6f 74 20 61 20 52 45  41 44 4d 45 20 79 65 74  |not a README yet|
+: 00000020  0a                                                |.|
+: 00000021
+
+It really is just zlib compressed type+length header, null byte,
+data. No magic!
+
+#+begin_src shell
+openssl zlib -d < .git/objects/b3/5c99875f5758f64e9348c05dac14848a046f59 | hexdump -C
+#+end_src
+
+#+RESULTS:
+:
+: 00000000  74 72 65 65 20 33 34 00  31 30 30 36 34 34 20 52  |tree 34.100644 R|
+: 00000010  45 41 44 4d 45 00 5b 6c  6c b6 72 dc 1c 3e 3f 38  |EADME.[ll.r..>?8|
+: 00000020  da 4c c8 19 c0 7d a5 10  fb 59                    |.L...}...Y|
+: 0000002a
+
+Same for the tree object. The 'garbage' in the ASCII representation is
+actually the README's blob hash in binary.
+* Committing using plumbing commands
